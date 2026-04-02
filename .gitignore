@@ -1,0 +1,15 @@
+# PyInstaller
+build/
+dist/
+*.spec
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Database (локальный файл)
+salary.db
+
+# IDE (опционально)
+.vscode/
+.idea/s

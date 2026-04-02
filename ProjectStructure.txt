@@ -6,6 +6,7 @@ SalaryApp/
 │   requirements.txt
 │   build_exe.bat
 │   README.txt
+│   .gitignore
 │
 └───gui/
     │   __init__.py
