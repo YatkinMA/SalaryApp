@@ -17,9 +17,9 @@ class SalaryCalculator:
         if regular_hours < norm_hours:
             regular_payment = regular_hours * hourly_rate
         else:
-            regular_payment = salary  # полный оклад при отработке нормы или больше (сверхурочные отдельно)
+            regular_payment = salary
 
-        # Сверхурочные (первые 2 часа по 1.5, остальные по 2)
+        # Сверхурочные: первые 2 часа за месяц по 1.5, остальные по 2
         overtime_payment = 0
         if overtime_hours > 0:
             first_two = min(2.0, overtime_hours)

@@ -1,25 +1,10 @@
 # gui/main_window.py
 import sys
-from PyQt5.QtWidgets import (
-    QMainWindow,
-    QWidget,
-    QVBoxLayout,
-    QHBoxLayout,
-    QPushButton,
-    QTableWidget,
-    QTableWidgetItem,
-    QLabel,
-    QMessageBox,
-    QTabWidget,
-    QHeaderView,
-    QGroupBox,
-    QFormLayout,
-    QLineEdit,
-    QDoubleSpinBox,
-    QComboBox,
-    QDateEdit,
-    QSpinBox,
-)
+from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+                             QPushButton, QTableWidget, QTableWidgetItem,
+                             QLabel, QMessageBox, QTabWidget, QHeaderView,
+                             QGroupBox, QFormLayout, QLineEdit, QDoubleSpinBox,
+                             QComboBox, QDateEdit, QSpinBox, QFileDialog)
 from PyQt5.QtCore import Qt, QDate
 from PyQt5.QtGui import QFont
 
@@ -29,6 +14,13 @@ from gui.employee_dialog import EmployeeDialog
 from gui.timesheet_dialog import TimesheetDialog
 from gui.styles import APP_STYLE
 
+import csv
+
+month_names = {
+    1: 'Январь', 2: 'Февраль', 3: 'Март', 4: 'Апрель',
+    5: 'Май', 6: 'Июнь', 7: 'Июль', 8: 'Август',
+    9: 'Сентябрь', 10: 'Октябрь', 11: 'Ноябрь', 12: 'Декабрь'
+}
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -65,6 +57,7 @@ class MainWindow(QMainWindow):
         # Загрузка данных
         self.load_employees_table()
         self.load_timesheet_table()
+        self.load_history_table()
 
     def setup_employees_tab(self):
         layout = QVBoxLayout(self.emp_tab)
@@ -77,18 +70,19 @@ class MainWindow(QMainWindow):
         self.edit_emp_btn.clicked.connect(self.edit_employee)
         self.del_emp_btn = QPushButton("Удалить")
         self.del_emp_btn.clicked.connect(self.delete_employee)
+        self.export_emp_btn = QPushButton("Выгрузить CSV")
+        self.export_emp_btn.clicked.connect(self.export_employees_csv)
         btn_layout.addWidget(self.add_emp_btn)
         btn_layout.addWidget(self.edit_emp_btn)
         btn_layout.addWidget(self.del_emp_btn)
+        btn_layout.addWidget(self.export_emp_btn)
         btn_layout.addStretch()
         layout.addLayout(btn_layout)
 
         # Таблица сотрудников
         self.emp_table = QTableWidget()
         self.emp_table.setColumnCount(4)
-        self.emp_table.setHorizontalHeaderLabels(
-            ["ID", "ФИО", "Должность", "Оклад, руб."]
-        )
+        self.emp_table.setHorizontalHeaderLabels(["ID", "ФИО", "Должность", "Оклад, руб."])
         self.emp_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.emp_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.emp_table.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -114,18 +108,19 @@ class MainWindow(QMainWindow):
         self.edit_ts_btn.clicked.connect(self.edit_timesheet)
         self.del_ts_btn = QPushButton("Удалить")
         self.del_ts_btn.clicked.connect(self.delete_timesheet)
+        self.export_ts_btn = QPushButton("Выгрузить CSV")
+        self.export_ts_btn.clicked.connect(self.export_timesheet_csv)
         btn_layout.addWidget(self.add_ts_btn)
         btn_layout.addWidget(self.edit_ts_btn)
         btn_layout.addWidget(self.del_ts_btn)
+        btn_layout.addWidget(self.export_ts_btn)
         btn_layout.addStretch()
         layout.addLayout(btn_layout)
 
         # Таблица табелей
         self.ts_table = QTableWidget()
         self.ts_table.setColumnCount(6)
-        self.ts_table.setHorizontalHeaderLabels(
-            ["Год", "Месяц", "Норма, ч", "Обычные, ч", "Сверхурочные, ч", "Выходные, ч"]
-        )
+        self.ts_table.setHorizontalHeaderLabels(["Год", "Месяц", "Норма, ч", "Обычные, ч", "Сверхурочные, ч", "Выходные, ч"])
         self.ts_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.ts_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.ts_table.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -179,11 +174,44 @@ class MainWindow(QMainWindow):
 
         layout.addWidget(res_group)
 
-        # Кнопка расчета (можно обновлять автоматически при смене, но добавим кнопку)
+        # Кнопка расчета
         calc_btn = QPushButton("Рассчитать")
         calc_btn.clicked.connect(self.calculate_salary)
         layout.addWidget(calc_btn)
 
+        # --- История расчётов ---
+        history_group = QGroupBox("Сохранённые расчёты")
+        history_layout = QVBoxLayout(history_group)
+
+        hist_btn_layout = QHBoxLayout()
+        self.save_calc_btn = QPushButton("Добавить текущий расчёт в таблицу")
+        self.save_calc_btn.clicked.connect(self.save_current_calculation)
+        self.refresh_history_btn = QPushButton("Обновить")
+        self.refresh_history_btn.clicked.connect(self.load_history_table)
+        self.export_history_btn = QPushButton("Выгрузить CSV")
+        self.export_history_btn.clicked.connect(self.export_history_csv)
+        hist_btn_layout.addWidget(self.save_calc_btn)
+        hist_btn_layout.addWidget(self.refresh_history_btn)
+        hist_btn_layout.addWidget(self.export_history_btn)
+        hist_btn_layout.addStretch()
+        history_layout.addLayout(hist_btn_layout)
+
+        # Таблица истории (с hidden столбцом ID)
+        self.history_table = QTableWidget()
+        self.history_table.setColumnCount(7)
+        self.history_table.setHorizontalHeaderLabels(["Год", "Месяц", "Оплата обычных", "Оплата сверхурочных", "Оплата выходных", "Итого", "ID"])
+        self.history_table.setColumnHidden(6, True)  # скрываем ID
+        self.history_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.history_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.history_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        history_layout.addWidget(self.history_table)
+
+        # Кнопка удаления
+        self.del_history_btn = QPushButton("Удалить выбранный расчёт")
+        self.del_history_btn.clicked.connect(self.delete_selected_calculation)
+        history_layout.addWidget(self.del_history_btn)
+
+        layout.addWidget(history_group)
         layout.addStretch()
 
     # --- Методы для сотрудников ---
@@ -193,7 +221,7 @@ class MainWindow(QMainWindow):
         for row, emp in enumerate(employees):
             self.emp_table.setItem(row, 0, QTableWidgetItem(emp.id))
             self.emp_table.setItem(row, 1, QTableWidgetItem(emp.name))
-            self.emp_table.setItem(row, 2, QTableWidgetItem(emp.position or ""))
+            self.emp_table.setItem(row, 2, QTableWidgetItem(emp.position or ''))
             self.emp_table.setItem(row, 3, QTableWidgetItem(f"{emp.salary:.2f}"))
         # Обновляем комбобоксы на других вкладках
         self.update_employee_combo_boxes()
@@ -215,12 +243,10 @@ class MainWindow(QMainWindow):
         dialog = EmployeeDialog(self)
         if dialog.exec_():
             data = dialog.get_data()
-            if not data["id"] or not data["name"]:
+            if not data['id'] or not data['name']:
                 QMessageBox.warning(self, "Ошибка", "ID и ФИО обязательны")
                 return
-            success, msg = self.db.add_employee(
-                data["id"], data["name"], data["salary"], data["position"]
-            )
+            success, msg = self.db.add_employee(data['id'], data['name'], data['salary'], data['position'])
             if success:
                 self.load_employees_table()
             else:
@@ -229,9 +255,7 @@ class MainWindow(QMainWindow):
     def edit_employee(self):
         current = self.emp_table.currentRow()
         if current < 0:
-            QMessageBox.information(
-                self, "Информация", "Выберите сотрудника для редактирования"
-            )
+            QMessageBox.information(self, "Информация", "Выберите сотрудника для редактирования")
             return
         emp_id = self.emp_table.item(current, 0).text()
         emp = self.db.get_employee(emp_id)
@@ -240,9 +264,7 @@ class MainWindow(QMainWindow):
         dialog = EmployeeDialog(self, employee=emp)
         if dialog.exec_():
             data = dialog.get_data()
-            success = self.db.update_employee(
-                emp_id, data["name"], data["salary"], data["position"]
-            )
+            success = self.db.update_employee(emp_id, data['name'], data['salary'], data['position'])
             if success:
                 self.load_employees_table()
             else:
@@ -251,27 +273,34 @@ class MainWindow(QMainWindow):
     def delete_employee(self):
         current = self.emp_table.currentRow()
         if current < 0:
-            QMessageBox.information(
-                self, "Информация", "Выберите сотрудника для удаления"
-            )
+            QMessageBox.information(self, "Информация", "Выберите сотрудника для удаления")
             return
         emp_id = self.emp_table.item(current, 0).text()
-        reply = QMessageBox.question(
-            self,
-            "Подтверждение",
-            f"Удалить сотрудника {emp_id}?",
-            QMessageBox.Yes | QMessageBox.No,
-        )
+        reply = QMessageBox.question(self, "Подтверждение", f"Удалить сотрудника {emp_id}?",
+                                     QMessageBox.Yes | QMessageBox.No)
         if reply == QMessageBox.Yes:
             self.db.delete_employee(emp_id)
             self.load_employees_table()
+
+    def export_employees_csv(self):
+        employees = self.db.get_all_employees()
+        if not employees:
+            QMessageBox.information(self, "Информация", "Нет данных для выгрузки")
+            return
+        filename, _ = QFileDialog.getSaveFileName(self, "Сохранить CSV", "", "CSV files (*.csv)")
+        if filename:
+            with open(filename, 'w', newline='', encoding='utf-8-sig') as f:
+                writer = csv.writer(f, delimiter=';')
+                writer.writerow(["ID", "ФИО", "Должность", "Оклад"])
+                for emp in employees:
+                    writer.writerow([emp.id, emp.name, emp.position or '', emp.salary])
+            QMessageBox.information(self, "Успех", f"Выгружено в {filename}")
 
     # --- Методы для табеля ---
     def load_timesheet_table(self):
         emp_id = self.ts_emp_combo.currentData()
         if emp_id is None:
             # Все сотрудники
-            # Для простоты будем показывать все табели, объединив с именами
             timesheets = []
             employees = self.db.get_all_employees()
             for emp in employees:
@@ -279,29 +308,21 @@ class MainWindow(QMainWindow):
                 for ts in ts_list:
                     timesheets.append((emp.name, ts))
         else:
-            timesheets = [
-                (self.ts_emp_combo.currentText(), ts)
-                for ts in self.db.get_timesheets_for_employee(emp_id)
-            ]
+            timesheets = [(self.ts_emp_combo.currentText(), ts) for ts in self.db.get_timesheets_for_employee(emp_id)]
 
         self.ts_table.setRowCount(len(timesheets))
         for row, (emp_name, ts) in enumerate(timesheets):
             self.ts_table.setItem(row, 0, QTableWidgetItem(str(ts.year)))
-            self.ts_table.setItem(row, 1, QTableWidgetItem(str(ts.month)))
+            self.ts_table.setItem(row, 1, QTableWidgetItem(month_names[ts.month]))
             self.ts_table.setItem(row, 2, QTableWidgetItem(f"{ts.norm_hours:.1f}"))
             self.ts_table.setItem(row, 3, QTableWidgetItem(f"{ts.regular_hours:.1f}"))
             self.ts_table.setItem(row, 4, QTableWidgetItem(f"{ts.overtime_hours:.1f}"))
             self.ts_table.setItem(row, 5, QTableWidgetItem(f"{ts.weekend_hours:.1f}"))
-            # Сохраняем id табеля в скрытом столбце? Можно добавить, но пока не нужно
 
     def add_timesheet(self):
         emp_id = self.ts_emp_combo.currentData()
         if emp_id is None:
-            QMessageBox.information(
-                self,
-                "Информация",
-                "Выберите конкретного сотрудника для добавления табеля",
-            )
+            QMessageBox.information(self, "Информация", "Выберите конкретного сотрудника для добавления табеля")
             return
         emp = self.db.get_employee(emp_id)
         if not emp:
@@ -310,13 +331,9 @@ class MainWindow(QMainWindow):
         if dialog.exec_():
             data = dialog.get_data()
             success, msg = self.db.add_timesheet(
-                emp_id,
-                data["year"],
-                data["month"],
-                data["norm_hours"],
-                data["regular_hours"],
-                data["overtime_hours"],
-                data["weekend_hours"],
+                emp_id, data['year'], data['month'],
+                data['norm_hours'], data['regular_hours'],
+                data['overtime_hours'], data['weekend_hours']
             )
             if success:
                 self.load_timesheet_table()
@@ -324,26 +341,25 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, "Ошибка", msg)
 
     def edit_timesheet(self):
-        # Получить выбранную строку
         current = self.ts_table.currentRow()
         if current < 0:
-            QMessageBox.information(
-                self, "Информация", "Выберите запись табеля для редактирования"
-            )
+            QMessageBox.information(self, "Информация", "Выберите запись табеля для редактирования")
             return
-        # Нужно определить employee_id и год/месяц
-        # Сначала получаем сотрудника из комбобокса
         emp_id = self.ts_emp_combo.currentData()
         if emp_id is None:
-            QMessageBox.information(
-                self,
-                "Информация",
-                "Для редактирования выберите конкретного сотрудника в фильтре",
-            )
+            QMessageBox.information(self, "Информация", "Для редактирования выберите конкретного сотрудника в фильтре")
             return
         year = int(self.ts_table.item(current, 0).text())
-        month = int(self.ts_table.item(current, 1).text())
-        ts = self.db.get_timesheet(emp_id, year, month)
+        month_num = None
+        # Находим номер месяца по названию
+        month_name = self.ts_table.item(current, 1).text()
+        for num, name in month_names.items():
+            if name == month_name:
+                month_num = num
+                break
+        if month_num is None:
+            return
+        ts = self.db.get_timesheet(emp_id, year, month_num)
         if not ts:
             return
         emp = self.db.get_employee(emp_id)
@@ -353,13 +369,9 @@ class MainWindow(QMainWindow):
             # Удаляем старую и добавляем новую (т.к. уникальность по employee/year/month)
             self.db.delete_timesheet(ts.id)
             success, msg = self.db.add_timesheet(
-                emp_id,
-                data["year"],
-                data["month"],
-                data["norm_hours"],
-                data["regular_hours"],
-                data["overtime_hours"],
-                data["weekend_hours"],
+                emp_id, data['year'], data['month'],
+                data['norm_hours'], data['regular_hours'],
+                data['overtime_hours'], data['weekend_hours']
             )
             if success:
                 self.load_timesheet_table()
@@ -369,37 +381,72 @@ class MainWindow(QMainWindow):
     def delete_timesheet(self):
         current = self.ts_table.currentRow()
         if current < 0:
-            QMessageBox.information(
-                self, "Информация", "Выберите запись табеля для удаления"
-            )
+            QMessageBox.information(self, "Информация", "Выберите запись табеля для удаления")
             return
         emp_id = self.ts_emp_combo.currentData()
         if emp_id is None:
-            QMessageBox.information(
-                self,
-                "Информация",
-                "Для удаления выберите конкретного сотрудника в фильтре",
-            )
+            QMessageBox.information(self, "Информация", "Для удаления выберите конкретного сотрудника в фильтре")
             return
         year = int(self.ts_table.item(current, 0).text())
-        month = int(self.ts_table.item(current, 1).text())
-        ts = self.db.get_timesheet(emp_id, year, month)
+        month_name = self.ts_table.item(current, 1).text()
+        month_num = None
+        for num, name in month_names.items():
+            if name == month_name:
+                month_num = num
+                break
+        if month_num is None:
+            return
+        ts = self.db.get_timesheet(emp_id, year, month_num)
         if not ts:
             return
-        reply = QMessageBox.question(
-            self,
-            "Подтверждение",
-            f"Удалить табель за {month}.{year}?",
-            QMessageBox.Yes | QMessageBox.No,
-        )
+        reply = QMessageBox.question(self, "Подтверждение", f"Удалить табель за {month_name} {year}?",
+                                     QMessageBox.Yes | QMessageBox.No)
         if reply == QMessageBox.Yes:
             self.db.delete_timesheet(ts.id)
             self.load_timesheet_table()
 
+    def export_timesheet_csv(self):
+        emp_id = self.ts_emp_combo.currentData()
+        if emp_id is None:
+            # Все сотрудники
+            data = []
+            employees = self.db.get_all_employees()
+            for emp in employees:
+                ts_list = self.db.get_timesheets_for_employee(emp.id)
+                for ts in ts_list:
+                    data.append([
+                        emp.id, emp.name,
+                        ts.year, month_names[ts.month],
+                        ts.norm_hours, ts.regular_hours, ts.overtime_hours, ts.weekend_hours
+                    ])
+        else:
+            emp = self.db.get_employee(emp_id)
+            if not emp:
+                return
+            ts_list = self.db.get_timesheets_for_employee(emp_id)
+            data = []
+            for ts in ts_list:
+                data.append([
+                    emp.id, emp.name,
+                    ts.year, month_names[ts.month],
+                    ts.norm_hours, ts.regular_hours, ts.overtime_hours, ts.weekend_hours
+                ])
+
+        if not data:
+            QMessageBox.information(self, "Информация", "Нет данных для выгрузки")
+            return
+        filename, _ = QFileDialog.getSaveFileName(self, "Сохранить CSV", "", "CSV files (*.csv)")
+        if filename:
+            with open(filename, 'w', newline='', encoding='utf-8-sig') as f:
+                writer = csv.writer(f, delimiter=';')
+                writer.writerow(["ID", "ФИО", "Год", "Месяц", "Норма, ч", "Обычные, ч", "Сверхурочные, ч", "Выходные, ч"])
+                writer.writerows(data)
+            QMessageBox.information(self, "Успех", f"Выгружено в {filename}")
+
     # --- Методы для расчета ---
     def on_calc_employee_changed(self):
-        # При смене сотрудника можно обновить доступные периоды, но пока просто очищаем поля
         self.clear_calc_fields()
+        self.load_history_table()
 
     def on_calc_period_changed(self):
         self.clear_calc_fields()
@@ -431,10 +478,10 @@ class MainWindow(QMainWindow):
             ts.norm_hours,
             ts.regular_hours,
             ts.overtime_hours,
-            ts.weekend_hours,
+            ts.weekend_hours
         )
-        if result.get("error"):
-            QMessageBox.warning(self, "Ошибка расчета", result["error"])
+        if result.get('error'):
+            QMessageBox.warning(self, "Ошибка расчета", result['error'])
             return
 
         self.lbl_hourly_rate.setText(f"{result['hourly_rate']:.2f} руб.")
@@ -443,6 +490,81 @@ class MainWindow(QMainWindow):
         self.lbl_weekend.setText(f"{result['weekend_payment']:.2f} руб.")
         self.lbl_total.setText(f"{result['total']:.2f} руб.")
 
+    # --- История расчётов ---
+    def save_current_calculation(self):
+        emp_id = self.calc_emp_combo.currentData()
+        if not emp_id:
+            QMessageBox.information(self, "Информация", "Выберите сотрудника")
+            return
+        year = self.calc_year_spin.value()
+        month = self.calc_month_spin.value()
+        if not self.lbl_total.text():
+            QMessageBox.information(self, "Информация", "Сначала выполните расчёт (кнопка Рассчитать)")
+            return
+        total_text = self.lbl_total.text().replace(" руб.", "")
+        regular_text = self.lbl_regular.text().replace(" руб.", "")
+        overtime_text = self.lbl_overtime.text().replace(" руб.", "")
+        weekend_text = self.lbl_weekend.text().replace(" руб.", "")
+        try:
+            total = float(total_text)
+            regular = float(regular_text) if regular_text else 0
+            overtime = float(overtime_text) if overtime_text else 0
+            weekend = float(weekend_text) if weekend_text else 0
+        except ValueError:
+            QMessageBox.warning(self, "Ошибка", "Не удалось получить сумму")
+            return
+
+        self.db.add_salary_calculation(emp_id, year, month, regular, overtime, weekend, total)
+        QMessageBox.information(self, "Успех", "Расчёт сохранён")
+        self.load_history_table()
+
+    def load_history_table(self):
+        emp_id = self.calc_emp_combo.currentData()
+        if not emp_id:
+            self.history_table.setRowCount(0)
+            return
+        calculations = self.db.get_salary_calculations_for_employee(emp_id)
+        self.history_table.setRowCount(len(calculations))
+        for row, calc in enumerate(calculations):
+            self.history_table.setItem(row, 0, QTableWidgetItem(str(calc.year)))
+            self.history_table.setItem(row, 1, QTableWidgetItem(month_names[calc.month]))
+            self.history_table.setItem(row, 2, QTableWidgetItem(f"{calc.regular_payment:.2f}"))
+            self.history_table.setItem(row, 3, QTableWidgetItem(f"{calc.overtime_payment:.2f}"))
+            self.history_table.setItem(row, 4, QTableWidgetItem(f"{calc.weekend_payment:.2f}"))
+            self.history_table.setItem(row, 5, QTableWidgetItem(f"{calc.total:.2f}"))
+            self.history_table.setItem(row, 6, QTableWidgetItem(str(calc.id)))
+
+    def delete_selected_calculation(self):
+        current = self.history_table.currentRow()
+        if current < 0:
+            QMessageBox.information(self, "Информация", "Выберите запись для удаления")
+            return
+        calc_id = int(self.history_table.item(current, 6).text())
+        self.db.delete_salary_calculation(calc_id)
+        self.load_history_table()
+
+    def export_history_csv(self):
+        emp_id = self.calc_emp_combo.currentData()
+        if not emp_id:
+            QMessageBox.information(self, "Информация", "Выберите сотрудника")
+            return
+        emp = self.db.get_employee(emp_id)
+        if not emp:
+            return
+        calculations = self.db.get_salary_calculations_for_employee(emp_id)
+        if not calculations:
+            QMessageBox.information(self, "Информация", "Нет сохранённых расчётов для этого сотрудника")
+            return
+        filename, _ = QFileDialog.getSaveFileName(self, "Сохранить CSV", "", "CSV files (*.csv)")
+        if filename:
+            with open(filename, 'w', newline='', encoding='utf-8-sig') as f:
+                writer = csv.writer(f, delimiter=';')
+                writer.writerow(["Год", "Месяц", "Оплата обычных", "Оплата сверхурочных", "Оплата выходных", "Итого"])
+                for calc in calculations:
+                    writer.writerow([calc.year, month_names[calc.month], calc.regular_payment, calc.overtime_payment, calc.weekend_payment, calc.total])
+            QMessageBox.information(self, "Успех", f"Выгружено в {filename}")
+
     def closeEvent(self, event):
         self.db.close()
         event.accept()
+        

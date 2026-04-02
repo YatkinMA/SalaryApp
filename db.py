@@ -1,11 +1,12 @@
 # db.py
-from models import init_db, Employee, Timesheet
+from models import init_db, Employee, Timesheet, SalaryCalculation
 from sqlalchemy.exc import IntegrityError
 
 class Database:
     def __init__(self, db_path='salary.db'):
         self.session = init_db(db_path)
 
+    # --- Сотрудники ---
     def add_employee(self, emp_id, name, salary, position=''):
         emp = Employee(id=emp_id, name=name, salary=salary, position=position)
         try:
@@ -43,7 +44,7 @@ class Database:
             return True
         return False
 
-    # Timesheet methods
+    # --- Табель ---
     def add_timesheet(self, employee_id, year, month, norm_hours, regular_hours, overtime_hours, weekend_hours):
         ts = Timesheet(
             employee_id=employee_id,
@@ -76,6 +77,32 @@ class Database:
         ts = self.session.query(Timesheet).get(timesheet_id)
         if ts:
             self.session.delete(ts)
+            self.session.commit()
+            return True
+        return False
+
+    # --- История расчётов ---
+    def add_salary_calculation(self, employee_id, year, month, regular_payment, overtime_payment, weekend_payment, total):
+        calc = SalaryCalculation(
+            employee_id=employee_id,
+            year=year,
+            month=month,
+            regular_payment=regular_payment,
+            overtime_payment=overtime_payment,
+            weekend_payment=weekend_payment,
+            total=total
+        )
+        self.session.add(calc)
+        self.session.commit()
+        return calc.id
+
+    def get_salary_calculations_for_employee(self, employee_id):
+        return self.session.query(SalaryCalculation).filter(SalaryCalculation.employee_id == employee_id).order_by(SalaryCalculation.year, SalaryCalculation.month).all()
+
+    def delete_salary_calculation(self, calc_id):
+        calc = self.session.query(SalaryCalculation).get(calc_id)
+        if calc:
+            self.session.delete(calc)
             self.session.commit()
             return True
         return False
