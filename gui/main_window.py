@@ -6,20 +6,23 @@ from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QGroupBox, QFormLayout, QLineEdit, QDoubleSpinBox,
                              QComboBox, QSpinBox, QFileDialog)
 from PyQt5.QtCore import Qt, QDate
-from PyQt5.QtGui import QFont
-from calendar import monthrange
+from PyQt5.QtGui import QFont, QColor
+from calendar import monthrange, weekday
+import csv
 
 from db import Database
 from salary_calc import SalaryCalculator
 from gui.employee_dialog import EmployeeDialog
 from gui.styles import APP_STYLE
 
-import csv
-
+# Названия месяцев и дней недели
 month_names = {
     1: 'Январь', 2: 'Февраль', 3: 'Март', 4: 'Апрель',
     5: 'Май', 6: 'Июнь', 7: 'Июль', 8: 'Август',
     9: 'Сентябрь', 10: 'Октябрь', 11: 'Ноябрь', 12: 'Декабрь'
+}
+weekday_names = {
+    0: 'Пн', 1: 'Вт', 2: 'Ср', 3: 'Чт', 4: 'Пт', 5: 'Сб', 6: 'Вс'
 }
 
 class MainWindow(QMainWindow):
@@ -27,7 +30,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.db = Database()
         self.setWindowTitle("Табель + Начисление зарплаты")
-        self.setMinimumSize(900, 600)
+        self.setMinimumSize(950, 650)
         self.setStyleSheet(APP_STYLE)
 
         central = QWidget()
@@ -189,7 +192,7 @@ class MainWindow(QMainWindow):
     def setup_day_timesheet_tab(self):
         layout = QVBoxLayout(self.day_tab)
 
-        # Выбор сотрудника и месяца
+        # Панель фильтров
         filter_layout = QHBoxLayout()
         filter_layout.addWidget(QLabel("Сотрудник:"))
         self.dt_emp_combo = QComboBox()
@@ -204,11 +207,13 @@ class MainWindow(QMainWindow):
         filter_layout.addWidget(self.dt_year_spin)
 
         filter_layout.addWidget(QLabel("Месяц:"))
-        self.dt_month_spin = QSpinBox()
-        self.dt_month_spin.setRange(1, 12)
-        self.dt_month_spin.setValue(QDate.currentDate().month())
-        self.dt_month_spin.valueChanged.connect(self.load_day_timesheet_table)
-        filter_layout.addWidget(self.dt_month_spin)
+        self.dt_month_combo = QComboBox()
+        for num, name in month_names.items():
+            self.dt_month_combo.addItem(name, num)
+        self.dt_month_combo.setCurrentIndex(QDate.currentDate().month() - 1)
+        self.dt_month_combo.currentIndexChanged.connect(self.load_day_timesheet_table)
+        filter_layout.addWidget(self.dt_month_combo)
+
         filter_layout.addStretch()
         layout.addLayout(filter_layout)
 
@@ -218,16 +223,19 @@ class MainWindow(QMainWindow):
         self.norm_spin = QDoubleSpinBox()
         self.norm_spin.setRange(0, 500)
         self.norm_spin.setSuffix(" ч")
+        self.norm_spin.setDecimals(1)
         self.norm_spin.valueChanged.connect(self.save_norm)
         norm_layout.addWidget(self.norm_spin)
         norm_layout.addStretch()
         layout.addLayout(norm_layout)
 
-        # Таблица дней
+        # Таблица дней (колонки: день, день недели, обычные, сверхурочные, выходные)
         self.day_table = QTableWidget()
-        self.day_table.setColumnCount(4)
-        self.day_table.setHorizontalHeaderLabels(["День", "Обычные часы", "Сверхурочные", "Выходные"])
+        self.day_table.setColumnCount(5)
+        self.day_table.setHorizontalHeaderLabels(["День", "День недели", "Обычные часы", "Сверхурочные", "Выходные"])
         self.day_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.day_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.day_table.setEditTriggers(QTableWidget.NoEditTriggers)
         layout.addWidget(self.day_table)
 
         # Кнопки
@@ -256,41 +264,78 @@ class MainWindow(QMainWindow):
             self.day_table.setRowCount(0)
             return
         year = self.dt_year_spin.value()
-        month = self.dt_month_spin.value()
+        month = self.dt_month_combo.currentData()
+        # Загружаем норму
         norm = self.db.get_monthly_norm(emp_id, year, month)
         self.norm_spin.setValue(norm if norm is not None else 0)
 
         entries = self.db.get_day_entries(emp_id, year, month)
         days_in_month = monthrange(year, month)[1]
         self.day_table.setRowCount(days_in_month)
-        for day in range(1, days_in_month + 1):
-            self.day_table.setItem(day-1, 0, QTableWidgetItem(str(day)))
-            regular, overtime, weekend = entries.get(day, (0,0,0))
 
+        for day in range(1, days_in_month + 1):
+            # День
+            self.day_table.setItem(day-1, 0, QTableWidgetItem(str(day)))
+            # День недели
+            weekday_num = weekday(year, month, day)  # 0=пн, 6=вс
+            weekday_name = weekday_names[weekday_num]
+            weekday_item = QTableWidgetItem(weekday_name)
+            # Подсветка выходных (суббота=5, воскресенье=6)
+            if weekday_num >= 5:
+                weekday_item.setBackground(QColor(255, 200, 200))  # светло-красный
+                # Всю строку потом тоже подсветим
+            self.day_table.setItem(day-1, 1, weekday_item)
+
+            # Обычные часы
+            regular = entries.get(day, (0,0,0))[0]
             regular_spin = QDoubleSpinBox()
             regular_spin.setRange(0, 24)
             regular_spin.setValue(regular)
             regular_spin.setDecimals(1)
-            self.day_table.setCellWidget(day-1, 1, regular_spin)
+            regular_spin.setSingleStep(0.5)
+            self.day_table.setCellWidget(day-1, 2, regular_spin)
 
+            # Сверхурочные
+            overtime = entries.get(day, (0,0,0))[1]
             overtime_spin = QDoubleSpinBox()
             overtime_spin.setRange(0, 24)
             overtime_spin.setValue(overtime)
             overtime_spin.setDecimals(1)
-            self.day_table.setCellWidget(day-1, 2, overtime_spin)
+            overtime_spin.setSingleStep(0.5)
+            self.day_table.setCellWidget(day-1, 3, overtime_spin)
 
+            # Выходные
+            weekend = entries.get(day, (0,0,0))[2]
             weekend_spin = QDoubleSpinBox()
             weekend_spin.setRange(0, 24)
             weekend_spin.setValue(weekend)
             weekend_spin.setDecimals(1)
-            self.day_table.setCellWidget(day-1, 3, weekend_spin)
+            weekend_spin.setSingleStep(0.5)
+            self.day_table.setCellWidget(day-1, 4, weekend_spin)
+
+            # Чередование цветов строк (чётные/нечётные)
+            if day % 2 == 0:
+                color = QColor(245, 245, 245)  # светлосерый
+            else:
+                color = QColor(255, 255, 255)  # белый
+            # Для выходных цвет уже установлен, но можно сделать чуть ярче
+            if weekday_num >= 5:
+                color = QColor(255, 220, 220)  # розоватый для выходных
+            self.set_row_color(day-1, color)
+
+    def set_row_color(self, row, color):
+        """Устанавливает цвет фона для всей строки"""
+        for col in range(self.day_table.columnCount()):
+            item = self.day_table.item(row, col)
+            if item is not None:
+                item.setBackground(color)
 
     def save_norm(self):
         emp_id = self.dt_emp_combo.currentData()
         if not emp_id:
             return
         year = self.dt_year_spin.value()
-        month = self.dt_month_spin.value()
+        month = self.dt_month_combo.currentData()
         norm = self.norm_spin.value()
         self.db.set_monthly_norm(emp_id, year, month, norm)
 
@@ -300,13 +345,13 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Ошибка", "Выберите сотрудника")
             return
         year = self.dt_year_spin.value()
-        month = self.dt_month_spin.value()
+        month = self.dt_month_combo.currentData()
         days_in_month = monthrange(year, month)[1]
         for row in range(days_in_month):
             day = row + 1
-            regular = self.day_table.cellWidget(row, 1).value()
-            overtime = self.day_table.cellWidget(row, 2).value()
-            weekend = self.day_table.cellWidget(row, 3).value()
+            regular = self.day_table.cellWidget(row, 2).value()
+            overtime = self.day_table.cellWidget(row, 3).value()
+            weekend = self.day_table.cellWidget(row, 4).value()
             self.db.save_day_entry(emp_id, year, month, day, regular, overtime, weekend)
         QMessageBox.information(self, "Успех", "Табель сохранён")
 
@@ -315,8 +360,8 @@ class MainWindow(QMainWindow):
         if not emp_id:
             return
         year = self.dt_year_spin.value()
-        month = self.dt_month_spin.value()
-        reply = QMessageBox.question(self, "Подтверждение", f"Очистить весь табель за {month}.{year}?",
+        month = self.dt_month_combo.currentData()
+        reply = QMessageBox.question(self, "Подтверждение", f"Очистить весь табель за {month_names[month]} {year}?",
                                      QMessageBox.Yes | QMessageBox.No)
         if reply == QMessageBox.Yes:
             self.db.clear_month_timesheet(emp_id, year, month)
@@ -328,17 +373,19 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Ошибка", "Выберите сотрудника")
             return
         year = self.dt_year_spin.value()
-        month = self.dt_month_spin.value()
+        month = self.dt_month_combo.currentData()
         entries = self.db.get_day_entries(emp_id, year, month)
         filename, _ = QFileDialog.getSaveFileName(self, "Сохранить CSV", "", "CSV files (*.csv)")
         if filename:
             with open(filename, 'w', newline='', encoding='utf-8-sig') as f:
                 writer = csv.writer(f, delimiter=';')
-                writer.writerow(["День", "Обычные часы", "Сверхурочные часы", "Выходные часы"])
+                writer.writerow(["День", "День недели", "Обычные часы", "Сверхурочные часы", "Выходные часы"])
                 days_in_month = monthrange(year, month)[1]
                 for day in range(1, days_in_month+1):
+                    weekday_num = weekday(year, month, day)
+                    weekday_name = weekday_names[weekday_num]
                     regular, overtime, weekend = entries.get(day, (0,0,0))
-                    writer.writerow([day, regular, overtime, weekend])
+                    writer.writerow([day, weekday_name, regular, overtime, weekend])
             QMessageBox.information(self, "Успех", f"Выгружено в {filename}")
 
     def import_day_timesheet_csv(self):
@@ -354,13 +401,14 @@ class MainWindow(QMainWindow):
                 reader = csv.reader(f, delimiter=';')
                 next(reader)  # заголовок
                 for row in reader:
-                    if len(row) < 4:
+                    if len(row) < 5:
                         continue
                     day = int(row[0])
-                    regular = float(row[1])
-                    overtime = float(row[2])
-                    weekend = float(row[3])
-                    self.db.save_day_entry(emp_id, self.dt_year_spin.value(), self.dt_month_spin.value(),
+                    # row[1] - день недели (игнорируем, вычисляем сами)
+                    regular = float(row[2])
+                    overtime = float(row[3])
+                    weekend = float(row[4])
+                    self.db.save_day_entry(emp_id, self.dt_year_spin.value(), self.dt_month_combo.currentData(),
                                            day, regular, overtime, weekend)
             self.load_day_timesheet_table()
             QMessageBox.information(self, "Успех", "Данные загружены")
@@ -381,12 +429,15 @@ class MainWindow(QMainWindow):
         self.calc_year_spin.setRange(2020, 2030)
         self.calc_year_spin.setValue(QDate.currentDate().year())
         self.calc_year_spin.valueChanged.connect(self.on_calc_period_changed)
-        self.calc_month_spin = QSpinBox()
-        self.calc_month_spin.setRange(1, 12)
-        self.calc_month_spin.setValue(QDate.currentDate().month())
-        self.calc_month_spin.valueChanged.connect(self.on_calc_period_changed)
         form.addRow("Год:", self.calc_year_spin)
-        form.addRow("Месяц:", self.calc_month_spin)
+
+        self.calc_month_combo = QComboBox()
+        for num, name in month_names.items():
+            self.calc_month_combo.addItem(name, num)
+        self.calc_month_combo.setCurrentIndex(QDate.currentDate().month() - 1)
+        self.calc_month_combo.currentIndexChanged.connect(self.on_calc_period_changed)
+        form.addRow("Месяц:", self.calc_month_combo)
+
         layout.addWidget(group)
 
         res_group = QGroupBox("Результат расчета")
@@ -464,7 +515,7 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Информация", "Выберите сотрудника")
             return
         year = self.calc_year_spin.value()
-        month = self.calc_month_spin.value()
+        month = self.calc_month_combo.currentData()
         norm = self.db.get_monthly_norm(emp_id, year, month)
         if norm is None:
             QMessageBox.warning(self, "Ошибка", "Норма часов за месяц не задана. Задайте на вкладке 'Дневной табель'.")
@@ -494,7 +545,7 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Информация", "Выберите сотрудника")
             return
         year = self.calc_year_spin.value()
-        month = self.calc_month_spin.value()
+        month = self.calc_month_combo.currentData()
         if not self.lbl_total.text():
             QMessageBox.information(self, "Информация", "Сначала выполните расчёт")
             return
