@@ -1,4 +1,5 @@
 @echo off
+chcp 1251 > nul
 echo Удаление старых сборок...
 if exist build rmdir /s /q build
 if exist dist rmdir /s /q dist
