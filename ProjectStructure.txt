@@ -1,0 +1,15 @@
+SalaryApp/
+│   main.py
+│   models.py
+│   db.py
+│   salary_calc.py
+│   requirements.txt
+│   build_exe.bat
+│   README.txt
+│
+└───gui/
+    │   __init__.py
+    │   main_window.py
+    │   employee_dialog.py
+    │   timesheet_dialog.py
+    │   styles.py
